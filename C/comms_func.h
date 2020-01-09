@@ -2,10 +2,6 @@
 //Slightly modified version of TI's example code
 void InitI2C0(void)
 {
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-    GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE, GPIO_PIN_5);
-    GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_5, 0b100000);
-
     //enable I2C module 0
     SysCtlPeripheralEnable(SYSCTL_PERIPH_I2C0);
 
@@ -31,6 +27,26 @@ void InitI2C0(void)
 
     //clear I2C FIFOs
     //HWREG(I2C0_BASE + I2C_O_FIFOCTL) = 80008000;
+}
+
+void initI2C0_dir(void)
+{
+    SYSCTL_RCGCI2C_R|= 0x01;
+    SYSCTL_RCGCGPIO_R |= 0x02;
+
+    GPIO_PORTB_AFSEL_R|= 0x0C;
+    GPIO_PORTB_PCTL_R &= ~0x0000FF00;
+    GPIO_PORTB_PCTL_R |= 0x00003300;
+    GPIO_PORTB_DEN_R|=0x0C;
+    GPIO_PORTB_ODR_R|= 0x08;
+
+
+    //Skipped GPIOPCTL
+    I2C0_MCR_R = 0x10;
+    I2C0_MTPR_R = (SysCtlClockGet()/(2*(6 + 4)*100000))-1;
+    //I2C0_MTPR_R = 9;
+
+
 }
 
 //read specified register on slave device
@@ -66,29 +82,6 @@ uint32_t I2CReceive(uint32_t slave_addr, int8_t reg)
 
 void writeI2C0(int16_t device_address, int16_t device_register, int8_t device_data)
 {
-   //specify that we want to communicate to device address with an intended write to bus
-   /*I2CMasterSlaveAddrSet(I2C0_BASE, device_address, false);
-
-   //register to be read
-   I2CMasterDataPut(I2C0_BASE, device_register);
-
-   //send control byte and register address byte to slave device
-   I2CMasterControl(I2C0_BASE, I2C_MASTER_CMD_SINGLE_SEND);
-
-   //wait for MCU to finish transaction
-   while(I2CMasterBusy(I2C0_BASE));
-
-   I2CMasterSlaveAddrSet(I2C0_BASE, device_address, false);
-
-   //specify data to be written to the above mentioned device_register
-   I2CMasterDataPut(I2C0_BASE, device_data);
-
-   //send control byte and register address byte to slave device
-  I2CMasterControl(I2C0_BASE, I2C_MASTER_CMD_SINGLE_SEND);
-
-   //wait for MCU & device to complete transaction
-   while(I2CMasterBusy(I2C0_BASE));*/
-
    //This works because the MPU6050 can't have a S condition between its sends
    //And the Single Send does exactly that
    //Burst avoids this
@@ -100,6 +93,65 @@ void writeI2C0(int16_t device_address, int16_t device_register, int8_t device_da
    I2CMasterDataPut(I2C0_BASE, device_data);
    I2CMasterControl(I2C0_BASE, I2C_MASTER_CMD_BURST_SEND_FINISH);
    while(I2CMasterBusy(I2C0_BASE));
+}
+
+uint8_t readI2C0_dir(uint16_t slave_addr, uint16_t mem_addr)
+{
+    //Get stuff from 0x45
+    volatile int error = 0;
+    //I2C0_MSA_R = 0xD0;
+    I2C0_MSA_R = slave_addr;
+    I2C0_MSA_R = (I2C0_MSA_R << 1);
+    //I2C0_MDR_R = 0x45;
+    I2C0_MDR_R = mem_addr;
+    I2C0_MCS_R = 0x07;
+    //I2C0_MCS_R = 3;
+    //while((I2C0_MCS_R & 0x40)!=0);
+    while((I2C0_MCS_R & 0x01)!=0);
+
+    //I2C0_MSA_R = 0xD1;
+    I2C0_MSA_R = slave_addr;
+    I2C0_MSA_R = (I2C0_MSA_R << 1) + 1;
+    I2C0_MCS_R = 0x07;
+    while((I2C0_MCS_R & 0x01)!=0);
+    if((I2C0_MCS_R & 0x02)==1)
+    {
+        error = 1;
+        return 0;
+    }
+    else
+    {
+        return I2C0_MDR_R;
+    }
+}
+
+//This function does burst write to MPU6050
+//This is because that is how MPU6050 works, i.e. it does not work with single writes
+void writeI2C0_dir(int16_t slave_addr, int16_t mem_addr, int16_t msg)
+{
+    volatile int error = 0;
+    I2C0_MSA_R = slave_addr;
+    I2C0_MSA_R = (I2C0_MSA_R << 1);
+    I2C0_MDR_R = mem_addr;
+    I2C0_MCS_R = 0x03;
+    while((I2C0_MCS_R & 0x01)!=0);
+
+    I2C0_MDR_R = msg;
+    I2C0_MCS_R = 0x05;
+    while((I2C0_MCS_R & 0x01)!=0);
+
+}
+
+
+//Single I2C write, not used but just in case.
+void writeI2C0_dir_single(int16_t slave_addr, int16_t msg)
+{
+    volatile int error = 0;
+    I2C0_MSA_R = slave_addr;
+    I2C0_MSA_R = (I2C0_MSA_R << 1);
+    I2C0_MDR_R = msg;
+    I2C0_MCS_R = 0x07;
+    while((I2C0_MCS_R & 0x01)!=0);
 }
 
 void ConfigureUART(void)
@@ -115,4 +167,71 @@ void ConfigureUART(void)
     UARTConfigSetExpClk(UART0_BASE, SysCtlClockGet(), 115200, (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE));
 
     UARTEnable(UART0_BASE);
+}
+
+void print_text(char arr[], int size)
+{
+    int i = 0;
+    for(i = 0; i < size; i++)
+        UARTCharPut(UART0_BASE, arr[i]);
+}
+
+void print_textln(char arr[], int size)
+{
+    int i = 0;
+    for(i = 0; i < size; i++)
+        UARTCharPut(UART0_BASE, arr[i]);
+
+    UARTCharPut(UART0_BASE, '\n');
+    UARTCharPut(UART0_BASE, '\r');
+}
+
+void print_num(char arr[], int size) //, int size
+{
+    int i = 0;
+    //int size = sizeof(arr)/sizeof(arr[0]);
+    for(i = size-1; i > -1; i--)
+    {
+        UARTCharPut(UART0_BASE, arr[i]);
+    }
+
+}
+
+void print_numln(char arr[], int size) //, int size
+{
+    int i = 0;
+    //int size = sizeof(arr)/sizeof(arr[0]);
+    for(i = size-1; i > -1; i--)
+    {
+        UARTCharPut(UART0_BASE, arr[i]);
+    }
+    UARTCharPut(UART0_BASE, '\n');
+    UARTCharPut(UART0_BASE, '\r');
+
+}
+
+char * int_to_array(int num, char arr[], int size)
+{
+    int i;
+    for(i = 0; i < size; i++)
+    {
+        arr[i] = (num % 10) + 48;
+        num = num / 10;
+    }
+
+    return arr;
+
+}
+
+char * decimal_to_array(float dec_num, char arr[4])
+{
+    int i;
+    int num = dec_num * 10000;
+    for(i = 0; i < 4; i++)
+    {
+        arr[i] = (num % 10) + 48;
+        num = num / 10;
+    }
+
+    return arr;
 }
