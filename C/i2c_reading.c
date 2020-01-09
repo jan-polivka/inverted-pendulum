@@ -50,31 +50,15 @@ void Timer0IntHandler(void)
     switch(state)
     {
     case 0:
-        angleH = I2CReceive(0x68, 0x45);
-        angleL = I2CReceive(0x68, 0x46);
+        //angleH = I2CReceive(0x68, 0x45);
+        //angleL = I2CReceive(0x68, 0x46);
+
+
+        angleH = readI2C0_dir(0x68, 0x45);
+        angleL = readI2C0_dir(0x68, 0x46);
+
         angleT = (((angleH << 8) | angleL)/ 131);
         angle_arr[mem_count] = angleT;
-
-
-        //Get stuff from 0x45
-        volatile int error = 0;
-        volatile int8_t angleT = 0;
-        I2C0_MSA_R = 0xD0;
-        I2C0_MDR_R = 0x45;
-        I2C0_MCS_R = 0x07;
-        //I2C0_MCS_R = 3;
-        while((I2C0_MCS_R & 0x40)!=0);
-        while((I2C0_MCS_R & 0x01)!=0);
-
-        I2C0_MSA_R = 0xD1;
-        I2C0_MCS_R = 0x07;
-        while((I2C0_MCS_R & 0x40)!=0);
-        if((I2C0_MCS_R & 0x02)==1)
-            error = 1;
-        else
-        {
-            angleT = I2C0_MDR_R;
-        }
 
 
         mem_count++;
@@ -116,7 +100,8 @@ int main(void)
 
 
     // Set the clocking to run directly from the external crystal/oscillator.
-    SysCtlClockSet(SYSCTL_SYSDIV_1 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+    SysCtlClockSet(SYSCTL_SYSDIV_10 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);//20000000 - 20MHz
+    //SYSCTL_SYSDIV_1 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ //12500000 - 12.5MHz
 
     int clock_check = SysCtlClockGet();
 
@@ -125,11 +110,18 @@ int main(void)
     GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_5, 0b100000);
 
     //Initialise I2C module 0
-    InitI2C0();
+    //InitI2C0();
+    initI2C0_dir();
+    uint32_t pwr_check = 0;
+    writeI2C0_dir(0x68, 0x6B, 0x03);
+    pwr_check = readI2C0_dir(0x68, 0x6B);
 
-    uint32_t pwr_check = I2CReceive(0x68, 0x6B);
-    writeI2C0(0x68, 0x6B, 0x03);
+    /*
+    //Leftover from when TIva ware was used
+    pwr_check = 2;
     pwr_check = I2CReceive(0x68, 0x6B);
+    writeI2C0(0x68, 0x6B, 0x03);
+    pwr_check = I2CReceive(0x68, 0x6B);*/
 
 
     SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER0);
